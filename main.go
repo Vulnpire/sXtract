@@ -76,7 +76,7 @@ func fetchIPsFromDomain(domain string) {
 	encodedDomain := url.QueryEscape(domain)
 
 	// Make the request to Shodan
-	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=ssl.cert.subject.cn%%3A%%22%s%%22&facet=ip", encodedDomain)
+	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=ssl.cert.subject.cn%%3A%%22*.%s%%22&facet=ip", encodedDomain)
 	resp, err := http.Get(shodanURL)
 	if err != nil {
 		log.Fatalf("Failed to fetch data from Shodan: %v", err)
