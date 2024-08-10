@@ -43,3 +43,15 @@ Fetching IPs from a CVE query strings
 Provide a text file with custom query strings, one per line, and use the -q flag:
 
 `cat queries.txt | sXtract -q`
+
+## Port scan using Shodan
+
+```
+cat << EOF > wildcards.txt
+> spotify.com
+> EOF
+```
+
+`cat wildcards.txt | sXtract -ip | anew ips.txt && for i in $(cat ips.txt);do shodan host $i;done`
+
+![image](https://github.com/user-attachments/assets/5e574a3f-17fd-4dc6-bbb0-8edbc71c1199)
