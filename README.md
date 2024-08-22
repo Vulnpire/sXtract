@@ -8,15 +8,9 @@ is a command-line tool written in Go that fetches IP addresses from Shodan based
 - Fetch IP addresses associated with domains
 - Fetch IP addresses based on custom query strings
 
-1. Ensure you have Go installed on your system. You can download and install Go from [the official website](https://go.dev/dl/).
+## Install
 
-2. Clone this repository:
-
-`git clone https://github.com/Vulnpire/shodanXtract`
-
-3. Build the executable:
-
-`go build -o sXtract main.go`
+`go install -v github.com/Vulnpire/sXtract@latest`
 
 ## Usage
 
