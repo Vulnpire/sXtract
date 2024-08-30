@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 )
 
 func main() {
@@ -17,6 +18,7 @@ func main() {
 	ipRangeFlag := flag.Bool("ir", false, "Fetch IPs from IP ranges")
 	ipDomainFlag := flag.Bool("ip", false, "Fetch IPs from domains")
 	queryFlag := flag.Bool("q", false, "Fetch IPs from query strings")
+	queryFileFlag := flag.String("qf", "", "Fetch additional dork queries from a file")
 
 	// Parse flags
 	flag.Parse()
@@ -32,15 +34,43 @@ func main() {
 		if *ipRangeFlag {
 			fetchIPsFromRange(input)
 		} else if *ipDomainFlag {
-			fetchIPsFromDomain(input)
+			additionalQueries := getAdditionalQueries(*queryFlag, *queryFileFlag)
+			fetchIPsFromDomain(input, additionalQueries)
 		} else if *queryFlag {
-			fetchIPsFromQuery(input)
+			additionalQueries := getAdditionalQueries(*queryFlag, *queryFileFlag)
+			fetchIPsFromQuery(input, additionalQueries)
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		log.Fatalf("Error reading input: %v", err)
 	}
+}
+
+// Function to get additional queries from flag or file
+func getAdditionalQueries(queryFlag bool, queryFile string) string {
+	if queryFlag && queryFile != "" {
+		file, err := os.Open(queryFile)
+		if err != nil {
+			log.Fatalf("Failed to open query file: %v", err)
+		}
+		defer file.Close()
+
+		var queries []string
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			queries = append(queries, scanner.Text())
+		}
+
+		if err := scanner.Err(); err != nil {
+			log.Fatalf("Error reading query file: %v", err)
+		}
+
+		return strings.Join(queries, "+")
+	} else if queryFlag {
+		return strings.Join(flag.Args(), "+")
+	}
+	return ""
 }
 
 func fetchIPsFromRange(ipRange string) {
@@ -72,11 +102,16 @@ func fetchIPsFromRange(ipRange string) {
 	}
 }
 
-func fetchIPsFromDomain(domain string) {
+func fetchIPsFromDomain(domain string, additionalQueries string) {
 	encodedDomain := url.QueryEscape(domain)
+	query := fmt.Sprintf("ssl.cert.subject.cn%%3A%%22%s%%22", encodedDomain)
+
+	if additionalQueries != "" {
+		query = fmt.Sprintf("%s+%s", query, additionalQueries)
+	}
 
 	// Make the request to Shodan
-	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=ssl.cert.subject.cn%%3A%%22*.%s%%22&facet=ip", encodedDomain)
+	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", query)
 	resp, err := http.Get(shodanURL)
 	if err != nil {
 		log.Fatalf("Failed to fetch data from Shodan: %v", err)
@@ -106,8 +141,11 @@ func fetchIPsFromDomain(domain string) {
 	}
 }
 
-func fetchIPsFromQuery(query string) {
+func fetchIPsFromQuery(query string, additionalQueries string) {
 	encodedQuery := url.QueryEscape(query)
+	if additionalQueries != "" {
+		encodedQuery = fmt.Sprintf("%s+%s", encodedQuery, additionalQueries)
+	}
 
 	// Make the request to Shodan
 	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", encodedQuery)
