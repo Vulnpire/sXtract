@@ -73,14 +73,16 @@ func main() {
 
 // Function to get additional queries from flag or file
 func getAdditionalQueries(queryFlag bool, queryFile string) string {
-	if queryFlag && queryFile != "" {
+	var queries []string
+
+	// Append the query from the file if -qf is provided
+	if queryFile != "" {
 		file, err := os.Open(queryFile)
 		if err != nil {
 			log.Fatalf("Failed to open query file: %v", err)
 		}
 		defer file.Close()
 
-		var queries []string
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			queries = append(queries, scanner.Text())
@@ -89,13 +91,16 @@ func getAdditionalQueries(queryFlag bool, queryFile string) string {
 		if err := scanner.Err(); err != nil {
 			log.Fatalf("Error reading query file: %v", err)
 		}
-
-		return strings.Join(queries, "+")
-	} else if queryFlag {
-		return strings.Join(flag.Args(), "+")
 	}
-	return ""
+
+	// Append the query from the -q flag if provided
+	if queryFlag {
+		queries = append(queries, flag.Args()...)
+	}
+
+	return strings.Join(queries, "+")
 }
+
 
 func fetchIPsFromRange(ipRange string) {
 	encodedRange := url.QueryEscape(ipRange)
@@ -196,17 +201,13 @@ func fetchIPsFromQuery(query string, additionalQueries string) {
 		}
 	}
 }
-// Helper function to make HTTP requests through AllOrigins with a random User-Agent
+// Helper function to make HTTP requests through AllOrigins with a random User-Agent and retry until success
 func makeRequest(targetURL string) *http.Response {
-	const maxRetries = 5
-	const retryDelay = 2 * time.Second
-
 	encodedTargetURL := url.QueryEscape(targetURL)
 	allOriginsURL := fmt.Sprintf("https://api.allorigins.win/get?url=%s", encodedTargetURL)
 
-	client := &http.Client{}
-
-	for i := 0; i < maxRetries; i++ {
+	for {
+		client := &http.Client{}
 		req, err := http.NewRequest("GET", allOriginsURL, nil)
 		if err != nil {
 			log.Fatalf("Failed to create request: %v", err)
@@ -217,9 +218,9 @@ func makeRequest(targetURL string) *http.Response {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Printf("Attempt %d: Failed to fetch data: %v", i+1, err)
-			time.Sleep(retryDelay)
-			continue
+			// log.Printf("Failed to fetch data: %v, retrying...", err)
+			time.Sleep(2 * time.Second)
+			continue // retry
 		}
 
 		defer resp.Body.Close()
@@ -227,16 +228,16 @@ func makeRequest(targetURL string) *http.Response {
 		// Read the response body
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			log.Printf("Attempt %d: Failed to read response body: %v", i+1, err)
-			time.Sleep(retryDelay)
-			continue
+			// log.Printf("Failed to read response body: %v, retrying...", err)
+			time.Sleep(2 * time.Second)
+			continue // retry
 		}
 
-		// Check for timeout or unexpected errors
+		// Check if response contains an AllOrigins error
 		if strings.Contains(string(body), "Oops") || strings.Contains(string(body), "Request Timeout") {
-			log.Printf("Attempt %d: AllOrigins returned an error: %s", i+1, string(body))
-			time.Sleep(retryDelay)
-			continue
+			// log.Printf("AllOrigins returned an error, retrying: %s", string(body))
+			time.Sleep(2 * time.Second)
+			continue // retry
 		}
 
 		// Check if response is valid JSON (AllOrigins JSON format)
@@ -244,19 +245,15 @@ func makeRequest(targetURL string) *http.Response {
 			Contents string `json:"contents"`
 		}
 		if err := json.Unmarshal(body, &allOriginsResponse); err != nil {
-			log.Printf("Attempt %d: Failed to parse AllOrigins response: %v", i+1, err)
-			time.Sleep(retryDelay)
-			continue
+			// log.Printf("Failed to parse AllOrigins response: %v, retrying...", err)
+			time.Sleep(2 * time.Second)
+			continue // retry
 		}
 
-		// Create a new response with the Shodan contents
+		// Successfully parsed response
 		return &http.Response{
 			Body: ioutil.NopCloser(strings.NewReader(allOriginsResponse.Contents)),
 		}
 	}
-
-	log.Fatalf("Failed to fetch data after %d attempts", maxRetries)
-	return nil
 }
-
 
