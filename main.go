@@ -2,16 +2,38 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
+
+var userAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.1 Safari/605.1.15",
+	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:92.0) Gecko/20100101 Firefox/92.0",
+	"Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1",
+}
+
+// Function to get a random user agent
+func getRandomUserAgent() string {
+	rand.Seed(time.Now().UnixNano())
+	return userAgents[rand.Intn(len(userAgents))]
+}
+
+// Function to add a delay between requests
+func rateLimit() {
+	time.Sleep(time.Duration(rand.Intn(5)+1) * time.Second) // Random delay between 1 to 5 seconds
+}
 
 func main() {
 	// Define flags
@@ -40,6 +62,8 @@ func main() {
 			additionalQueries := getAdditionalQueries(*queryFlag, *queryFileFlag)
 			fetchIPsFromQuery(input, additionalQueries)
 		}
+
+		rateLimit() // Add delay after each request
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -76,12 +100,9 @@ func getAdditionalQueries(queryFlag bool, queryFile string) string {
 func fetchIPsFromRange(ipRange string) {
 	encodedRange := url.QueryEscape(ipRange)
 
-	// Make the request to Shodan
+	// Build the Shodan URL
 	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=Net%%3A%s&facet=ip", encodedRange)
-	resp, err := http.Get(shodanURL)
-	if err != nil {
-		log.Fatalf("Failed to fetch data from Shodan: %v", err)
-	}
+	resp := makeRequest(shodanURL)
 	defer resp.Body.Close()
 
 	// Read the response body
@@ -110,12 +131,9 @@ func fetchIPsFromDomain(domain string, additionalQueries string) {
 		query = fmt.Sprintf("%s+%s", query, additionalQueries)
 	}
 
-	// Make the request to Shodan
+	// Build the Shodan URL
 	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", query)
-	resp, err := http.Get(shodanURL)
-	if err != nil {
-		log.Fatalf("Failed to fetch data from Shodan: %v", err)
-	}
+	resp := makeRequest(shodanURL)
 	defer resp.Body.Close()
 
 	// Read the response body
@@ -147,12 +165,9 @@ func fetchIPsFromQuery(query string, additionalQueries string) {
 		encodedQuery = fmt.Sprintf("%s+%s", encodedQuery, additionalQueries)
 	}
 
-	// Make the request to Shodan
+	// Build the Shodan URL
 	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", encodedQuery)
-	resp, err := http.Get(shodanURL)
-	if err != nil {
-		log.Fatalf("Failed to fetch data from Shodan: %v", err)
-	}
+	resp := makeRequest(shodanURL)
 	defer resp.Body.Close()
 
 	// Read the response body
@@ -175,5 +190,42 @@ func fetchIPsFromQuery(query string, additionalQueries string) {
 				fmt.Println(ip)
 			}
 		}
+	}
+}
+
+// Helper function to make HTTP requests through AllOrigins with a random User-Agent
+func makeRequest(targetURL string) *http.Response {
+	encodedTargetURL := url.QueryEscape(targetURL)
+	allOriginsURL := fmt.Sprintf("https://api.allorigins.win/get?url=%s", encodedTargetURL)
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", allOriginsURL, nil)
+	if err != nil {
+		log.Fatalf("Failed to create request: %v", err)
+	}
+
+	// Set a random User-Agent
+	req.Header.Set("User-Agent", getRandomUserAgent())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Failed to fetch data: %v", err)
+	}
+
+	// Parse the AllOrigins response (which contains JSON)
+	var allOriginsResponse struct {
+		Contents string `json:"contents"`
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("Failed to read response body: %v", err)
+	}
+	if err := json.Unmarshal(body, &allOriginsResponse); err != nil {
+		log.Fatalf("Failed to parse AllOrigins response: %v", err)
+	}
+
+	// Create a new response with the Shodan contents
+	return &http.Response{
+		Body: ioutil.NopCloser(strings.NewReader(allOriginsResponse.Contents)),
 	}
 }
