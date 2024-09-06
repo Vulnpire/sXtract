@@ -134,6 +134,10 @@ func fetchIPsFromDomain(domain string, additionalQueries string) {
 	// Build the Shodan URL
 	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", query)
 	resp := makeRequest(shodanURL)
+	if resp == nil {
+		log.Println("Skipping IP extraction due to request failure")
+		return
+	}
 	defer resp.Body.Close()
 
 	// Read the response body
@@ -192,40 +196,67 @@ func fetchIPsFromQuery(query string, additionalQueries string) {
 		}
 	}
 }
-
 // Helper function to make HTTP requests through AllOrigins with a random User-Agent
 func makeRequest(targetURL string) *http.Response {
+	const maxRetries = 5
+	const retryDelay = 2 * time.Second
+
 	encodedTargetURL := url.QueryEscape(targetURL)
 	allOriginsURL := fmt.Sprintf("https://api.allorigins.win/get?url=%s", encodedTargetURL)
 
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", allOriginsURL, nil)
-	if err != nil {
-		log.Fatalf("Failed to create request: %v", err)
+
+	for i := 0; i < maxRetries; i++ {
+		req, err := http.NewRequest("GET", allOriginsURL, nil)
+		if err != nil {
+			log.Fatalf("Failed to create request: %v", err)
+		}
+
+		// Set a random User-Agent
+		req.Header.Set("User-Agent", getRandomUserAgent())
+
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Attempt %d: Failed to fetch data: %v", i+1, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		defer resp.Body.Close()
+
+		// Read the response body
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Attempt %d: Failed to read response body: %v", i+1, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// Check for timeout or unexpected errors
+		if strings.Contains(string(body), "Oops") || strings.Contains(string(body), "Request Timeout") {
+			log.Printf("Attempt %d: AllOrigins returned an error: %s", i+1, string(body))
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// Check if response is valid JSON (AllOrigins JSON format)
+		var allOriginsResponse struct {
+			Contents string `json:"contents"`
+		}
+		if err := json.Unmarshal(body, &allOriginsResponse); err != nil {
+			log.Printf("Attempt %d: Failed to parse AllOrigins response: %v", i+1, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// Create a new response with the Shodan contents
+		return &http.Response{
+			Body: ioutil.NopCloser(strings.NewReader(allOriginsResponse.Contents)),
+		}
 	}
 
-	// Set a random User-Agent
-	req.Header.Set("User-Agent", getRandomUserAgent())
-
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatalf("Failed to fetch data: %v", err)
-	}
-
-	// Parse the AllOrigins response (which contains JSON)
-	var allOriginsResponse struct {
-		Contents string `json:"contents"`
-	}
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Failed to read response body: %v", err)
-	}
-	if err := json.Unmarshal(body, &allOriginsResponse); err != nil {
-		log.Fatalf("Failed to parse AllOrigins response: %v", err)
-	}
-
-	// Create a new response with the Shodan contents
-	return &http.Response{
-		Body: ioutil.NopCloser(strings.NewReader(allOriginsResponse.Contents)),
-	}
+	log.Fatalf("Failed to fetch data after %d attempts", maxRetries)
+	return nil
 }
+
+
