@@ -40,13 +40,14 @@ func main() {
 	ipRangeFlag := flag.Bool("ir", false, "Fetch IPs from IP ranges")
 	ipDomainFlag := flag.Bool("ip", false, "Fetch IPs from domains")
 	queryFlag := flag.Bool("q", false, "Fetch IPs from query strings")
+	hashFlag := flag.Bool("hs", false, "Fetch IPs from favicon hash")
 	queryFileFlag := flag.String("qf", "", "Fetch additional dork queries from a file")
 
 	// Parse flags
 	flag.Parse()
 
-	if !*ipRangeFlag && !*ipDomainFlag && !*queryFlag {
-		log.Fatalf("Please specify one of -ir, -ip, or -q flags")
+	if !*ipRangeFlag && !*ipDomainFlag && !*queryFlag && !*hashFlag {
+		log.Fatalf("Please specify one of -ir, -ip, -q, or -hs flags")
 	}
 
 	// Read from stdin
@@ -61,6 +62,8 @@ func main() {
 		} else if *queryFlag {
 			additionalQueries := getAdditionalQueries(*queryFlag, *queryFileFlag)
 			fetchIPsFromQuery(input, additionalQueries)
+		} else if *hashFlag {
+			fetchIPsFromFaviconHash(input)
 		}
 
 		rateLimit() // Add delay after each request
@@ -68,6 +71,42 @@ func main() {
 
 	if err := scanner.Err(); err != nil {
 		log.Fatalf("Error reading input: %v", err)
+	}
+}
+
+// Function to fetch IPs from favicon hash
+func fetchIPsFromFaviconHash(hash string) {
+	encodedHash := url.QueryEscape(hash)
+
+	// Build the Shodan URL
+	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=http.favicon.hash%%3A%s&facet=ip", encodedHash)
+	resp := makeRequest(shodanURL)
+	if resp == nil {
+		log.Println("Skipping IP extraction due to request failure")
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read the response body
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("Failed to read response body: %v", err)
+	}
+
+	// Extract IPs using regex
+	re := regexp.MustCompile(`<strong>([^<]+)</strong>`)
+	matches := re.FindAllStringSubmatch(string(body), -1)
+
+	ipRe := regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
+
+	// Print the IPs
+	for _, match := range matches {
+		if len(match) > 1 {
+			ip := match[1]
+			if ipRe.MatchString(ip) {
+				fmt.Println(ip)
+			}
+		}
 	}
 }
 
@@ -256,4 +295,3 @@ func makeRequest(targetURL string) *http.Response {
 		}
 	}
 }
-
