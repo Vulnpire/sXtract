@@ -39,15 +39,15 @@ func main() {
 	// Define flags
 	ipRangeFlag := flag.Bool("ir", false, "Fetch IPs from IP ranges")
 	ipDomainFlag := flag.Bool("ip", false, "Fetch IPs from domains")
-	queryFlag := flag.Bool("q", false, "Fetch IPs from query strings")
+	queryFlag := flag.String("q", "", "Fetch IPs from query strings")
 	hashFlag := flag.Bool("hs", false, "Fetch IPs from favicon hash")
 	queryFileFlag := flag.String("qf", "", "Fetch additional dork queries from a file")
 
 	// Parse flags
 	flag.Parse()
 
-	if !*ipRangeFlag && !*ipDomainFlag && !*queryFlag && !*hashFlag {
-		log.Fatalf("Please specify one of -ir, -ip, -q, or -hs flags")
+	if !*ipRangeFlag && !*ipDomainFlag && !*hashFlag {
+		log.Fatalf("Please specify one of -ir, -ip, or -hs flags")
 	}
 
 	// Read from stdin
@@ -57,13 +57,11 @@ func main() {
 		if *ipRangeFlag {
 			fetchIPsFromRange(input)
 		} else if *ipDomainFlag {
-			additionalQueries := getAdditionalQueries(*queryFlag, *queryFileFlag)
+			additionalQueries := getAdditionalQueries(*queryFlag != "", *queryFileFlag)
 			fetchIPsFromDomain(input, additionalQueries)
-		} else if *queryFlag {
-			additionalQueries := getAdditionalQueries(*queryFlag, *queryFileFlag)
-			fetchIPsFromQuery(input, additionalQueries)
 		} else if *hashFlag {
-			fetchIPsFromFaviconHash(input)
+			additionalQueries := getAdditionalQueries(*queryFlag != "", *queryFileFlag)
+			fetchIPsFromFaviconHash(input, *queryFlag, additionalQueries)
 		}
 
 		rateLimit() // Add delay after each request
@@ -74,12 +72,26 @@ func main() {
 	}
 }
 
-// Function to fetch IPs from favicon hash
-func fetchIPsFromFaviconHash(hash string) {
+// Function to fetch IPs from favicon hash with an optional query
+func fetchIPsFromFaviconHash(hash string, query string, additionalQueries string) {
 	encodedHash := url.QueryEscape(hash)
 
+	// Build the base query with the favicon hash
+	shodanQuery := fmt.Sprintf("http.favicon.hash%%3A%s", encodedHash)
+
+	// Append the query from the -q flag if provided
+	if query != "" {
+		encodedQuery := url.QueryEscape(query)
+		shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, encodedQuery)
+	}
+
+	// Append additional queries if any
+	if additionalQueries != "" {
+		shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, additionalQueries)
+	}
+
 	// Build the Shodan URL
-	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=http.favicon.hash%%3A%s&facet=ip", encodedHash)
+	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", shodanQuery)
 	resp := makeRequest(shodanURL)
 	if resp == nil {
 		log.Println("Skipping IP extraction due to request failure")
