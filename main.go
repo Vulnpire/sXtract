@@ -55,7 +55,8 @@ func main() {
 	for scanner.Scan() {
 		input := scanner.Text()
 		if *ipRangeFlag {
-			fetchIPsFromRange(input)
+			additionalQueries := getAdditionalQueries(*queryFlag != "", *queryFileFlag)
+			fetchIPsFromRange(input, *queryFlag, additionalQueries)
 		} else if *ipDomainFlag {
 			additionalQueries := getAdditionalQueries(*queryFlag != "", *queryFileFlag)
 			fetchIPsFromDomain(input, additionalQueries)
@@ -153,12 +154,31 @@ func getAdditionalQueries(queryFlag bool, queryFile string) string {
 }
 
 
-func fetchIPsFromRange(ipRange string) {
+// Function to fetch IPs from IP ranges with an optional query
+func fetchIPsFromRange(ipRange string, query string, additionalQueries string) {
 	encodedRange := url.QueryEscape(ipRange)
 
+	// Build the base query with the IP range
+	shodanQuery := fmt.Sprintf("Net%%3A%s", encodedRange)
+
+	// Append the query from the -q flag if provided
+	if query != "" {
+		encodedQuery := url.QueryEscape(query)
+		shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, encodedQuery)
+	}
+
+	// Append additional queries if any
+	if additionalQueries != "" {
+		shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, additionalQueries)
+	}
+
 	// Build the Shodan URL
-	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=Net%%3A%s&facet=ip", encodedRange)
+	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", shodanQuery)
 	resp := makeRequest(shodanURL)
+	if resp == nil {
+		log.Println("Skipping IP extraction due to request failure")
+		return
+	}
 	defer resp.Body.Close()
 
 	// Read the response body
@@ -171,14 +191,18 @@ func fetchIPsFromRange(ipRange string) {
 	re := regexp.MustCompile(`<strong>([^<]+)</strong>`)
 	matches := re.FindAllStringSubmatch(string(body), -1)
 
+	ipRe := regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
+
 	// Print the IPs
 	for _, match := range matches {
 		if len(match) > 1 {
-			fmt.Println(match[1])
+			ip := match[1]
+			if ipRe.MatchString(ip) {
+				fmt.Println(ip)
+			}
 		}
 	}
 }
-
 func fetchIPsFromDomain(domain string, additionalQueries string) {
 	encodedDomain := url.QueryEscape(domain)
 	query := fmt.Sprintf("ssl.cert.subject.cn%%3A%%22%s%%22", encodedDomain)
