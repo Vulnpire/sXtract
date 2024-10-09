@@ -39,9 +39,10 @@ func main() {
 	// Define flags
 	ipRangeFlag := flag.Bool("ir", false, "Fetch IPs from IP ranges")
 	ipDomainFlag := flag.Bool("ip", false, "Fetch IPs from domains")
-	queryFlag := flag.String("q", "", "Fetch IPs from query strings")
+	queryFlag := flag.String("q", "", "Fetch IPs from query strings")  // this returns a *string, not a bool
 	hashFlag := flag.Bool("hs", false, "Fetch IPs from favicon hash")
 	queryFileFlag := flag.String("qf", "", "Fetch additional dork queries from a file")
+
 
 	// Parse flags
 	flag.Parse()
@@ -53,20 +54,20 @@ func main() {
 	// Read from stdin
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		input := scanner.Text()
-		if *ipRangeFlag {
-			additionalQueries := getAdditionalQueries(*queryFlag != "", *queryFileFlag)
-			fetchIPsFromRange(input, *queryFlag, additionalQueries)
-		} else if *ipDomainFlag {
-			additionalQueries := getAdditionalQueries(*queryFlag != "", *queryFileFlag)
-			fetchIPsFromDomain(input, additionalQueries)
-		} else if *hashFlag {
-			additionalQueries := getAdditionalQueries(*queryFlag != "", *queryFileFlag)
-			fetchIPsFromFaviconHash(input, *queryFlag, additionalQueries)
-		}
-
-		rateLimit() // Add delay after each request
+	    input := scanner.Text()
+	    additionalQueries := getAdditionalQueries(*queryFlag != "", *queryFileFlag)  // Pass the dereferenced *queryFlag
+	
+	    if *ipRangeFlag {
+	        fetchIPsFromRange(input, *queryFlag, additionalQueries)  // Dereference *queryFlag here
+	    } else if *ipDomainFlag {
+	        fetchIPsFromDomain(input, *queryFlag, additionalQueries)  // Dereference *queryFlag here
+	    } else if *hashFlag {
+	        fetchIPsFromFaviconHash(input, *queryFlag, additionalQueries)  // Dereference *queryFlag here
+	    }
+	
+	    rateLimit() // Add delay after each request
 	}
+
 
 	if err := scanner.Err(); err != nil {
 		log.Fatalf("Error reading input: %v", err)
@@ -75,82 +76,82 @@ func main() {
 
 // Function to fetch IPs from favicon hash with an optional query
 func fetchIPsFromFaviconHash(hash string, query string, additionalQueries string) {
-	encodedHash := url.QueryEscape(hash)
+    encodedHash := url.QueryEscape(hash)
 
-	// Build the base query with the favicon hash
-	shodanQuery := fmt.Sprintf("http.favicon.hash%%3A%s", encodedHash)
+    // Build the base query with the favicon hash
+    shodanQuery := fmt.Sprintf("http.favicon.hash%%3A%s", encodedHash)
 
-	// Append the query from the -q flag if provided
-	if query != "" {
-		encodedQuery := url.QueryEscape(query)
-		shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, encodedQuery)
-	}
+    // Append the query from the -q flag if provided
+    if query != "" {  // Correct dereferencing check
+        encodedQuery := url.QueryEscape(query)
+        shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, encodedQuery)
+    }
 
-	// Append additional queries if any
-	if additionalQueries != "" {
-		shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, additionalQueries)
-	}
+    // Append additional queries if any
+    if additionalQueries != "" {
+        shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, additionalQueries)
+    }
 
-	// Build the Shodan URL
-	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", shodanQuery)
-	resp := makeRequest(shodanURL)
-	if resp == nil {
-		log.Println("Skipping IP extraction due to request failure")
-		return
-	}
-	defer resp.Body.Close()
+    // Build the Shodan URL and make the request
+    shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", shodanQuery)
+    resp := makeRequest(shodanURL)
+    if resp == nil {
+        log.Println("Skipping IP extraction due to request failure")
+        return
+    }
+    defer resp.Body.Close()
 
-	// Read the response body
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Failed to read response body: %v", err)
-	}
+    // Read the response and extract IPs
+    body, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        log.Fatalf("Failed to read response body: %v", err)
+    }
 
-	// Extract IPs using regex
-	re := regexp.MustCompile(`<strong>([^<]+)</strong>`)
-	matches := re.FindAllStringSubmatch(string(body), -1)
+    re := regexp.MustCompile(`<strong>([^<]+)</strong>`)
+    matches := re.FindAllStringSubmatch(string(body), -1)
 
-	ipRe := regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
+    ipRe := regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
 
-	// Print the IPs
-	for _, match := range matches {
-		if len(match) > 1 {
-			ip := match[1]
-			if ipRe.MatchString(ip) {
-				fmt.Println(ip)
-			}
-		}
-	}
+    for _, match := range matches {
+        if len(match) > 1 {
+            ip := match[1]
+            if ipRe.MatchString(ip) {
+                fmt.Println(ip)
+            }
+        }
+    }
 }
+
+
 
 // Function to get additional queries from flag or file
 func getAdditionalQueries(queryFlag bool, queryFile string) string {
-	var queries []string
+    var queries []string
 
-	// Append the query from the file if -qf is provided
-	if queryFile != "" {
-		file, err := os.Open(queryFile)
-		if err != nil {
-			log.Fatalf("Failed to open query file: %v", err)
-		}
-		defer file.Close()
+    // Append the query from the file if -qf is provided
+    if queryFile != "" {
+        file, err := os.Open(queryFile)
+        if err != nil {
+            log.Fatalf("Failed to open query file: %v", err)
+        }
+        defer file.Close()
 
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			queries = append(queries, scanner.Text())
-		}
+        scanner := bufio.NewScanner(file)
+        for scanner.Scan() {
+            queries = append(queries, scanner.Text())
+        }
 
-		if err := scanner.Err(); err != nil {
-			log.Fatalf("Error reading query file: %v", err)
-		}
-	}
+        if err := scanner.Err(); err != nil {
+            log.Fatalf("Error reading query file: %v", err)
+        }
+    }
 
-	// Append the query from the -q flag if provided
-	if queryFlag {
-		queries = append(queries, flag.Args()...)
-	}
+    // Append the query from the -q flag if provided
+    if queryFlag {
+        queries = append(queries, flag.Args()...)
+    }
 
-	return strings.Join(queries, "+")
+    return strings.Join(queries, "+")
 }
 
 
@@ -203,45 +204,50 @@ func fetchIPsFromRange(ipRange string, query string, additionalQueries string) {
 		}
 	}
 }
-func fetchIPsFromDomain(domain string, additionalQueries string) {
-	encodedDomain := url.QueryEscape(domain)
-	query := fmt.Sprintf("ssl.cert.subject.cn%%3A%%22%s%%22", encodedDomain)
+func fetchIPsFromDomain(domain string, query string, additionalQueries string) {
+    encodedDomain := url.QueryEscape(domain)
+    shodanQuery := fmt.Sprintf("ssl.cert.subject.cn%%3A%%22%s%%22", encodedDomain)
 
-	if additionalQueries != "" {
-		query = fmt.Sprintf("%s+%s", query, additionalQueries)
-	}
+    // Append the query from the -q flag if provided
+    if query != "" {  // Correct dereferencing check
+        encodedQuery := url.QueryEscape(query)
+        shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, encodedQuery)
+    }
 
-	// Build the Shodan URL
-	shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", query)
-	resp := makeRequest(shodanURL)
-	if resp == nil {
-		log.Println("Skipping IP extraction due to request failure")
-		return
-	}
-	defer resp.Body.Close()
+    // Append additional queries if any
+    if additionalQueries != "" {
+        shodanQuery = fmt.Sprintf("%s+%s", shodanQuery, additionalQueries)
+    }
 
-	// Read the response body
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Failed to read response body: %v", err)
-	}
+    shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", shodanQuery)
+    resp := makeRequest(shodanURL)
+    if resp == nil {
+        log.Println("Skipping IP extraction due to request failure")
+        return
+    }
+    defer resp.Body.Close()
 
-	// Extract IPs using regex
-	re := regexp.MustCompile(`<strong>([^<]+)</strong>`)
-	matches := re.FindAllStringSubmatch(string(body), -1)
+    body, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        log.Fatalf("Failed to read response body: %v", err)
+    }
 
-	ipRe := regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
+    re := regexp.MustCompile(`<strong>([^<]+)</strong>`)
+    matches := re.FindAllStringSubmatch(string(body), -1)
 
-	// Print the IPs
-	for _, match := range matches {
-		if len(match) > 1 {
-			ip := match[1]
-			if ipRe.MatchString(ip) {
-				fmt.Println(ip)
-			}
-		}
-	}
+    ipRe := regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
+
+    for _, match := range matches {
+        if len(match) > 1 {
+            ip := match[1]
+            if ipRe.MatchString(ip) {
+                fmt.Println(ip)
+            }
+        }
+    }
 }
+
+
 
 func fetchIPsFromQuery(query string, additionalQueries string) {
 	encodedQuery := url.QueryEscape(query)
