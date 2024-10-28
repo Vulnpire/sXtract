@@ -13,66 +13,86 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
-var userAgents = []string{
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.1 Safari/605.1.15",
-	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:92.0) Gecko/20100101 Firefox/92.0",
-	"Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1",
+var (
+	userAgents = []string{
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.1 Safari/605.1.15",
+		"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:92.0) Gecko/20100101 Firefox/92.0",
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1",
+	}
+	concurrency int
+)
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
 }
 
 // Function to get a random user agent
 func getRandomUserAgent() string {
-	rand.Seed(time.Now().UnixNano())
 	return userAgents[rand.Intn(len(userAgents))]
-}
-
-// Function to add a delay between requests
-func rateLimit() {
-	time.Sleep(time.Duration(rand.Intn(5)+1) * time.Second) // Random delay between 1 to 5 seconds
 }
 
 func main() {
 	// Define flags
 	ipRangeFlag := flag.Bool("ir", false, "Fetch IPs from IP ranges")
 	ipDomainFlag := flag.Bool("ip", false, "Fetch IPs from domains")
-	queryFlag := flag.String("q", "", "Fetch IPs from query strings")  // this returns a *string, not a bool
+	queryFlag := flag.String("q", "", "Fetch IPs from query strings")
 	hashFlag := flag.Bool("hs", false, "Fetch IPs from favicon hash")
 	queryFileFlag := flag.String("qf", "", "Fetch additional dork queries from a file")
+	flag.IntVar(&concurrency, "c", 5, "Number of concurrent workers")
 
-
-	// Parse flags
 	flag.Parse()
 
 	if !*ipRangeFlag && !*ipDomainFlag && !*hashFlag {
 		log.Fatalf("Please specify one of -ir, -ip, or -hs flags")
 	}
 
-	// Read from stdin
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-	    input := scanner.Text()
-	    additionalQueries := getAdditionalQueries(*queryFlag != "", *queryFileFlag)  // Pass the dereferenced *queryFlag
-	
-	    if *ipRangeFlag {
-	        fetchIPsFromRange(input, *queryFlag, additionalQueries)  // Dereference *queryFlag here
-	    } else if *ipDomainFlag {
-	        fetchIPsFromDomain(input, *queryFlag, additionalQueries)  // Dereference *queryFlag here
-	    } else if *hashFlag {
-	        fetchIPsFromFaviconHash(input, *queryFlag, additionalQueries)  // Dereference *queryFlag here
-	    }
-	
-	    rateLimit() // Add delay after each request
+	// Create a buffered channel to limit concurrency
+	inputCh := make(chan string, concurrency)
+	var wg sync.WaitGroup
+
+	// Start worker goroutines
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go worker(inputCh, &wg, *ipRangeFlag, *ipDomainFlag, *hashFlag, *queryFlag, *queryFileFlag)
 	}
 
+	// Read input from stdin and send to channel
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		inputCh <- scanner.Text()
+	}
+
+	close(inputCh) // Close the channel to signal workers to stop
+	wg.Wait()      // Wait for all workers to finish
 
 	if err := scanner.Err(); err != nil {
 		log.Fatalf("Error reading input: %v", err)
 	}
 }
+
+// Worker function to process each input line concurrently
+func worker(inputCh <-chan string, wg *sync.WaitGroup, ipRangeFlag, ipDomainFlag, hashFlag bool, queryFlag, queryFileFlag string) {
+	defer wg.Done()
+	for input := range inputCh {
+		additionalQueries := getAdditionalQueries(queryFlag != "", queryFileFlag)
+		if ipRangeFlag {
+			fetchIPsFromRange(input, queryFlag, additionalQueries)
+		} else if ipDomainFlag {
+			fetchIPsFromDomain(input, queryFlag, additionalQueries)
+		} else if hashFlag {
+			fetchIPsFromFaviconHash(input, queryFlag, additionalQueries)
+		}
+	}
+}
+
+// Add all other functions below (fetchIPsFromRange, fetchIPsFromDomain, fetchIPsFromFaviconHash, getAdditionalQueries, makeRequest) without changes.
+
 
 // Function to fetch IPs from favicon hash with an optional query
 func fetchIPsFromFaviconHash(hash string, query string, additionalQueries string) {
