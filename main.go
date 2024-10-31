@@ -44,6 +44,7 @@ func main() {
 	queryFlag := flag.String("q", "", "Fetch IPs from query strings")
 	hashFlag := flag.Bool("hs", false, "Fetch IPs from favicon hash")
 	queryFileFlag := flag.String("qf", "", "Fetch additional dork queries from a file")
+	sslFlag := flag.Bool("ssl", false, "Include SSL certificate search for domain")
 	flag.IntVar(&concurrency, "c", 5, "Number of concurrent workers")
 
 	flag.Parse()
@@ -59,7 +60,7 @@ func main() {
 	// Start worker goroutines
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
-		go worker(inputCh, &wg, *ipRangeFlag, *ipDomainFlag, *hashFlag, *queryFlag, *queryFileFlag)
+		go worker(inputCh, &wg, *ipRangeFlag, *ipDomainFlag, *hashFlag, *sslFlag, *queryFlag, *queryFileFlag)
 	}
 
 	// Read input from stdin and send to channel
@@ -77,21 +78,19 @@ func main() {
 }
 
 // Worker function to process each input line concurrently
-func worker(inputCh <-chan string, wg *sync.WaitGroup, ipRangeFlag, ipDomainFlag, hashFlag bool, queryFlag, queryFileFlag string) {
+func worker(inputCh <-chan string, wg *sync.WaitGroup, ipRangeFlag, ipDomainFlag, hashFlag, sslFlag bool, queryFlag, queryFileFlag string) {
 	defer wg.Done()
 	for input := range inputCh {
 		additionalQueries := getAdditionalQueries(queryFlag != "", queryFileFlag)
 		if ipRangeFlag {
 			fetchIPsFromRange(input, queryFlag, additionalQueries)
 		} else if ipDomainFlag {
-			fetchIPsFromDomain(input, queryFlag, additionalQueries)
+			fetchIPsFromDomain(input, sslFlag, queryFlag, additionalQueries)
 		} else if hashFlag {
 			fetchIPsFromFaviconHash(input, queryFlag, additionalQueries)
 		}
 	}
 }
-
-// Add all other functions below (fetchIPsFromRange, fetchIPsFromDomain, fetchIPsFromFaviconHash, getAdditionalQueries, makeRequest) without changes.
 
 
 // Function to fetch IPs from favicon hash with an optional query
@@ -224,77 +223,88 @@ func fetchIPsFromRange(ipRange string, query string, additionalQueries string) {
 		}
 	}
 }
-func fetchIPsFromDomain(domain string, query string, additionalQueries string) {
-    encodedDomain := url.QueryEscape(domain)
+// Modified fetchIPsFromDomain function with optional sslCertQuery based on -ssl flag
+func fetchIPsFromDomain(domain string, sslFlag bool, query string, additionalQueries string) {
+	encodedDomain := url.QueryEscape(domain)
 
-    // Prepare the Shodan queries for hostname and ssl.cert.subject.cn
-    hostnameQuery := fmt.Sprintf("hostname%%3A%s", encodedDomain)
-    sslCertQuery := fmt.Sprintf("ssl.cert.subject.cn%%3A%%22%s%%22", encodedDomain)
+	// Prepare the Shodan query for hostname
+	hostnameQuery := fmt.Sprintf("hostname%%3A%s", encodedDomain)
 
-    // Function to append query and additionalQueries to a base Shodan query
-    appendQueries := func(baseQuery string) string {
-        if query != "" {
-            encodedQuery := url.QueryEscape(query)
-            baseQuery = fmt.Sprintf("%s+%s", baseQuery, encodedQuery)
-        }
-        if additionalQueries != "" {
-            baseQuery = fmt.Sprintf("%s+%s", baseQuery, additionalQueries)
-        }
-        return baseQuery
-    }
+	// Prepare the Shodan query for ssl.cert.subject.cn if sslFlag is set
+	var sslCertQuery string
+	if sslFlag {
+		sslCertQuery = fmt.Sprintf("ssl.cert.subject.cn%%3A%%22%s%%22", encodedDomain)
+	}
 
-    // Create the full queries for hostname and ssl.cert.subject.cn
-    fullHostnameQuery := appendQueries(hostnameQuery)
-    fullSslCertQuery := appendQueries(sslCertQuery)
+	// Function to append query and additionalQueries to a base Shodan query
+	appendQueries := func(baseQuery string) string {
+		if query != "" {
+			encodedQuery := url.QueryEscape(query)
+			baseQuery = fmt.Sprintf("%s+%s", baseQuery, encodedQuery)
+		}
+		if additionalQueries != "" {
+			baseQuery = fmt.Sprintf("%s+%s", baseQuery, additionalQueries)
+		}
+		return baseQuery
+	}
 
-    // Function to make request and extract IPs from the response
-    extractIPs := func(shodanQuery string) []string {
-        shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", shodanQuery)
-        resp := makeRequest(shodanURL)
-        if resp == nil {
-            log.Println("Skipping IP extraction due to request failure")
-            return nil
-        }
-        defer resp.Body.Close()
+	// Create the full query for hostname
+	fullHostnameQuery := appendQueries(hostnameQuery)
 
-        body, err := ioutil.ReadAll(resp.Body)
-        if err != nil {
-            log.Fatalf("Failed to read response body: %v", err)
-        }
+	// Function to make request and extract IPs from the response
+	extractIPs := func(shodanQuery string) []string {
+		shodanURL := fmt.Sprintf("https://www.shodan.io/search/facet?query=%s&facet=ip", shodanQuery)
+		resp := makeRequest(shodanURL)
+		if resp == nil {
+			log.Println("Skipping IP extraction due to request failure")
+			return nil
+		}
+		defer resp.Body.Close()
 
-        re := regexp.MustCompile(`<strong>([^<]+)</strong>`)
-        matches := re.FindAllStringSubmatch(string(body), -1)
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatalf("Failed to read response body: %v", err)
+		}
 
-        ipRe := regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
-        var ips []string
-        for _, match := range matches {
-            if len(match) > 1 {
-                ip := match[1]
-                if ipRe.MatchString(ip) {
-                    ips = append(ips, ip)
-                }
-            }
-        }
-        return ips
-    }
+		re := regexp.MustCompile(`<strong>([^<]+)</strong>`)
+		matches := re.FindAllStringSubmatch(string(body), -1)
 
-    // Extract IPs for both queries
-    hostnameIPs := extractIPs(fullHostnameQuery)
-    sslCertIPs := extractIPs(fullSslCertQuery)
+		ipRe := regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
+		var ips []string
+		for _, match := range matches {
+			if len(match) > 1 {
+				ip := match[1]
+				if ipRe.MatchString(ip) {
+					ips = append(ips, ip)
+				}
+			}
+		}
+		return ips
+	}
 
-    // Combine both results and remove duplicates
-    uniqueIPs := make(map[string]struct{})
-    for _, ip := range hostnameIPs {
-        uniqueIPs[ip] = struct{}{}
-    }
-    for _, ip := range sslCertIPs {
-        uniqueIPs[ip] = struct{}{}
-    }
+	// Extract IPs for hostname query
+	hostnameIPs := extractIPs(fullHostnameQuery)
 
-    // Print the unique IPs
-    for ip := range uniqueIPs {
-        fmt.Println(ip)
-    }
+	// Extract IPs for ssl.cert.subject.cn query if sslFlag is true
+	var sslCertIPs []string
+	if sslFlag {
+		fullSslCertQuery := appendQueries(sslCertQuery)
+		sslCertIPs = extractIPs(fullSslCertQuery)
+	}
+
+	// Combine both results and remove duplicates
+	uniqueIPs := make(map[string]struct{})
+	for _, ip := range hostnameIPs {
+		uniqueIPs[ip] = struct{}{}
+	}
+	for _, ip := range sslCertIPs {
+		uniqueIPs[ip] = struct{}{}
+	}
+
+	// Print the unique IPs
+	for ip := range uniqueIPs {
+		fmt.Println(ip)
+	}
 }
 
 
