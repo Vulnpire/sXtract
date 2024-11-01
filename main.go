@@ -416,7 +416,7 @@ func directRequest(targetURL string) *http.Response {
 	clientWithExtendedTimeout := &http.Client{Timeout: 15 * time.Second}
 
 	for {
-		log.Printf("Direct request attempt %d to %s", retryCount+1, targetURL)
+		// log.Printf("Direct request attempt %d to %s", retryCount+1, targetURL)
 		req, err := http.NewRequest("GET", targetURL, nil)
 		if err != nil {
 			log.Fatalf("Failed to create direct request: %v", err)
@@ -438,4 +438,3 @@ func directRequest(targetURL string) *http.Response {
 		return resp
 	}
 }
-
