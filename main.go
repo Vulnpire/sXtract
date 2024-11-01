@@ -141,6 +141,8 @@ func fetchIPsFromFaviconHash(hash string, query string, additionalQueries string
     }
 }
 
+
+
 // Function to get additional queries from flag or file
 func getAdditionalQueries(queryFlag bool, queryFile string) string {
     var queries []string
@@ -170,6 +172,7 @@ func getAdditionalQueries(queryFlag bool, queryFile string) string {
 
     return strings.Join(queries, "+")
 }
+
 
 // Function to fetch IPs from IP ranges with an optional query
 func fetchIPsFromRange(ipRange string, query string, additionalQueries string) {
@@ -220,7 +223,6 @@ func fetchIPsFromRange(ipRange string, query string, additionalQueries string) {
 		}
 	}
 }
-
 // Modified fetchIPsFromDomain function with optional sslCertQuery based on -ssl flag
 func fetchIPsFromDomain(domain string, sslFlag bool, query string, additionalQueries string) {
 	encodedDomain := url.QueryEscape(domain)
@@ -340,58 +342,83 @@ func fetchIPsFromQuery(query string, additionalQueries string) {
 		}
 	}
 }
-// Helper function to make HTTP requests through AllOrigins with a random User-Agent and retry until success
+// Set a timeout of 10 seconds for requests to prevent hanging
+var client = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
+// Helper function to make HTTP requests through AllOrigins with a fallback to direct request.
 func makeRequest(targetURL string) *http.Response {
+	const maxRetries = 3
+	retryCount := 0
+
 	encodedTargetURL := url.QueryEscape(targetURL)
 	allOriginsURL := fmt.Sprintf("https://api.allorigins.win/get?url=%s", encodedTargetURL)
 
 	for {
-		client := &http.Client{}
 		req, err := http.NewRequest("GET", allOriginsURL, nil)
 		if err != nil {
 			log.Fatalf("Failed to create request: %v", err)
 		}
-
-		// Set a random User-Agent
 		req.Header.Set("User-Agent", getRandomUserAgent())
 
 		resp, err := client.Do(req)
-		if err != nil {
-			// log.Printf("Failed to fetch data: %v, retrying...", err)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			// log.Printf("AllOrigins request failed (attempt %d): %v", retryCount+1, err)
+			retryCount++
+			if retryCount >= maxRetries {
+				// log.Println("AllOrigins failed repeatedly, switching to direct request.")
+				return directRequest(targetURL)
+			}
 			time.Sleep(2 * time.Second)
-			continue // retry
+			continue
 		}
 
-		defer resp.Body.Close()
-
-		// Read the response body
 		body, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
-			// log.Printf("Failed to read response body: %v, retrying...", err)
+			// log.Printf("Failed to read AllOrigins response body (attempt %d): %v", retryCount+1, err)
+			retryCount++
+			if retryCount >= maxRetries {
+				// log.Println("AllOrigins response read failed repeatedly, switching to direct request.")
+				return directRequest(targetURL)
+			}
 			time.Sleep(2 * time.Second)
-			continue // retry
+			continue
 		}
 
-		// Check if response contains an AllOrigins error
-		if strings.Contains(string(body), "Oops") || strings.Contains(string(body), "Request Timeout") {
-			// log.Printf("AllOrigins returned an error, retrying: %s", string(body))
-			time.Sleep(2 * time.Second)
-			continue // retry
-		}
-
-		// Check if response is valid JSON (AllOrigins JSON format)
 		var allOriginsResponse struct {
 			Contents string `json:"contents"`
 		}
 		if err := json.Unmarshal(body, &allOriginsResponse); err != nil {
-			// log.Printf("Failed to parse AllOrigins response: %v, retrying...", err)
+			// log.Printf("Failed to parse AllOrigins response (attempt %d): %v", retryCount+1, err)
+			retryCount++
+			if retryCount >= maxRetries {
+				// log.Println("AllOrigins JSON parse failed repeatedly, switching to direct request.")
+				return directRequest(targetURL)
+			}
 			time.Sleep(2 * time.Second)
-			continue // retry
+			continue
 		}
 
-		// Successfully parsed response
 		return &http.Response{
 			Body: ioutil.NopCloser(strings.NewReader(allOriginsResponse.Contents)),
 		}
 	}
+}
+
+// Direct request to the target URL with timeout and logging
+func directRequest(targetURL string) *http.Response {
+	// log.Printf("Attempting direct request to %s", targetURL)
+	req, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		log.Fatalf("Failed to create direct request: %v", err)
+	}
+	req.Header.Set("User-Agent", getRandomUserAgent())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Direct request failed: %v", err)
+	}
+	return resp
 }
