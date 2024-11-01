@@ -141,8 +141,6 @@ func fetchIPsFromFaviconHash(hash string, query string, additionalQueries string
     }
 }
 
-
-
 // Function to get additional queries from flag or file
 func getAdditionalQueries(queryFlag bool, queryFile string) string {
     var queries []string
@@ -172,7 +170,6 @@ func getAdditionalQueries(queryFlag bool, queryFile string) string {
 
     return strings.Join(queries, "+")
 }
-
 
 // Function to fetch IPs from IP ranges with an optional query
 func fetchIPsFromRange(ipRange string, query string, additionalQueries string) {
@@ -223,6 +220,7 @@ func fetchIPsFromRange(ipRange string, query string, additionalQueries string) {
 		}
 	}
 }
+
 // Modified fetchIPsFromDomain function with optional sslCertQuery based on -ssl flag
 func fetchIPsFromDomain(domain string, sslFlag bool, query string, additionalQueries string) {
 	encodedDomain := url.QueryEscape(domain)
