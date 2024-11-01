@@ -391,7 +391,7 @@ func makeRequest(targetURL string) *http.Response {
 			Contents string `json:"contents"`
 		}
 		if err := json.Unmarshal(body, &allOriginsResponse); err != nil {
-			// log.Printf("Failed to parse AllOrigins response (attempt %d): %v", retryCount+1, err)
+			//log.Printf("Failed to parse AllOrigins response (attempt %d): %v", retryCount+1, err)
 			retryCount++
 			if retryCount >= maxRetries {
 				// log.Println("AllOrigins JSON parse failed repeatedly, switching to direct request.")
@@ -409,16 +409,33 @@ func makeRequest(targetURL string) *http.Response {
 
 // Direct request to the target URL with timeout and logging
 func directRequest(targetURL string) *http.Response {
-	// log.Printf("Attempting direct request to %s", targetURL)
-	req, err := http.NewRequest("GET", targetURL, nil)
-	if err != nil {
-		log.Fatalf("Failed to create direct request: %v", err)
-	}
-	req.Header.Set("User-Agent", getRandomUserAgent())
+	const maxRetries = 3
+	const retryDelay = 3 * time.Second
 
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatalf("Direct request failed: %v", err)
+	retryCount := 0
+	clientWithExtendedTimeout := &http.Client{Timeout: 15 * time.Second}
+
+	for {
+		log.Printf("Direct request attempt %d to %s", retryCount+1, targetURL)
+		req, err := http.NewRequest("GET", targetURL, nil)
+		if err != nil {
+			log.Fatalf("Failed to create direct request: %v", err)
+		}
+		req.Header.Set("User-Agent", getRandomUserAgent())
+
+		resp, err := clientWithExtendedTimeout.Do(req)
+		if err != nil {
+			// log.Printf("Direct request failed (attempt %d): %v", retryCount+1, err)
+			retryCount++
+			if retryCount >= maxRetries {
+				log.Println("Direct request failed after multiple attempts.")
+				return nil // Return nil to indicate the failure if all attempts fail
+			}
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		return resp
 	}
-	return resp
 }
+
